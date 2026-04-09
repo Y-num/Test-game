@@ -2,198 +2,133 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Cyber Shooter - Daruma Edition</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D Ball Factory & Launcher</title>
     <style>
-        body { margin: 0; background: #050505; overflow: hidden; font-family: 'Courier New', Courier, monospace; }
-        canvas { display: block; }
-        #ui {
-            position: absolute; top: 20px; left: 20px;
-            color: #00ffcc; font-size: 24px; pointer-events: none;
-            text-shadow: 0 0 10px #00ffcc;
-        }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; pointer-events: none; }
+        #factory-menu { position: absolute; bottom: 20px; width: 100%; text-align: center; }
+        button { padding: 10px 20px; font-size: 16px; pointer-events: auto; cursor: pointer; }
     </style>
 </head>
 <body>
-    <div id="ui">SCORE: <span id="score">0</span></div>
-    <canvas id="gameCanvas"></canvas>
 
-<script>
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-const scoreEl = document.getElementById('score');
+    <div id="ui">
+        <h2>Distance: <span id="dist">0</span>m</h2>
+        <p>ボールをスワイプして飛ばそう！</p>
+    </div>
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+    <div id="factory-menu">
+        <button onclick="setMass(0.5)">軽量ボール</button>
+        <button onclick="setMass(5.0)">重量ボール</button>
+        <button onclick="resetBall()">リセット</button>
+    </div>
 
-let score = 0;
-let particles = [];
-let projectiles = [];
-let enemies = [];
-
-class Player {
-    constructor() {
-        this.x = canvas.width / 2;
-        this.y = canvas.height / 2;
-        this.radius = 15;
-        this.color = '#00ffcc';
-    }
-    draw() {
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-        ctx.fillStyle = this.color;
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = this.color;
-        ctx.fill();
-        ctx.closePath();
-    }
-}
-
-class Projectile {
-    constructor(x, y, velocity) {
-        this.x = x; this.y = y; this.velocity = velocity;
-        this.radius = 4; this.color = '#ff00ff';
-    }
-    draw() {
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-        ctx.fillStyle = this.color;
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = this.color;
-        ctx.fill();
-    }
-    update() {
-        this.x += this.velocity.x;
-        this.y += this.velocity.y;
-    }
-}
-
-class Enemy {
-    constructor(x, y, radius, color, velocity) {
-        this.x = x; this.y = y; this.radius = radius;
-        this.color = color; this.velocity = velocity;
-    }
-    draw() {
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-        ctx.strokeStyle = this.color;
-        ctx.lineWidth = 3;
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = this.color;
-        ctx.stroke();
-    }
-    update() {
-        this.x += this.velocity.x;
-        this.y += this.velocity.y;
-    }
-}
-
-class Particle {
-    constructor(x, y, radius, color, velocity) {
-        this.x = x; this.y = y; this.radius = radius;
-        this.color = color; this.velocity = velocity;
-        this.alpha = 1;
-    }
-    draw() {
-        ctx.save();
-        ctx.globalAlpha = this.alpha;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-        ctx.fillStyle = this.color;
-        ctx.fill();
-        ctx.restore();
-    }
-    update() {
-        this.x += this.velocity.x;
-        this.y += this.velocity.y;
-        this.alpha -= 0.02;
-    }
-}
-
-const player = new Player();
-
-function spawnEnemies() {
-    setInterval(() => {
-        const radius = Math.random() * (30 - 10) + 10;
-        let x, y;
-        if (Math.random() < 0.5) {
-            x = Math.random() < 0.5 ? 0 - radius : canvas.width + radius;
-            y = Math.random() * canvas.height;
-        } else {
-            x = Math.random() * canvas.width;
-            y = Math.random() < 0.5 ? 0 - radius : canvas.height + radius;
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
         }
-        const color = `hsl(${Math.random() * 360}, 50%, 50%)`;
-        const angle = Math.atan2(canvas.height / 2 - y, canvas.width / 2 - x);
-        const velocity = { x: Math.cos(angle) * 2, y: Math.sin(angle) * 2 };
-        enemies.push(new Enemy(x, y, radius, color, velocity));
-    }, 1000);
-}
+    }
+    </script>
 
-function animate() {
-    requestAnimationFrame(animate);
-    ctx.fillStyle = 'rgba(5, 5, 5, 0.1)'; // 残像効果
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    player.draw();
+    <script type="module">
+        import * as THREE from 'three';
+        import * as CANNON from 'cannon-es';
 
-    particles.forEach((particle, index) => {
-        if (particle.alpha <= 0) {
-            particles.splice(index, 1);
-        } else {
-            particle.update();
-            particle.draw();
-        }
-    });
+        // --- 基本設定 ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
 
-    projectiles.forEach((projectile, index) => {
-        projectile.update();
-        projectile.draw();
-        if (projectile.x + projectile.radius < 0 || projectile.x - projectile.radius > canvas.width ||
-            projectile.y + projectile.radius < 0 || projectile.y - projectile.radius > canvas.height) {
-            projectiles.splice(index, 1);
-        }
-    });
+        const world = new CANNON.World();
+        world.gravity.set(0, -9.82, 0); // 地球の重力
 
-    enemies.forEach((enemy, index) => {
-        enemy.update();
-        enemy.draw();
+        // --- 照明 ---
+        const light = new THREE.DirectionalLight(0xffffff, 1);
+        light.position.set(5, 10, 5);
+        scene.add(light);
+        scene.add(new THREE.AmbientLight(0x404040));
 
-        // プレイヤーとの衝突
-        const dist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
-        if (dist - enemy.radius - player.radius < 1) {
-            alert('GAME OVER! SCORE: ' + score);
-            document.location.reload();
-        }
+        // --- 地面 ---
+        const groundGeo = new THREE.PlaneGeometry(100, 1000);
+        const groundMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
+        const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+        groundMesh.rotation.x = -Math.PI / 2;
+        scene.add(groundMesh);
 
-        // 弾との衝突
-        projectiles.forEach((projectile, pIndex) => {
-            const d = Math.hypot(projectile.x - enemy.x, projectile.y - enemy.y);
-            if (d - enemy.radius - projectile.radius < 1) {
-                // パーティクル生成
-                for (let i = 0; i < 8; i++) {
-                    particles.push(new Particle(enemy.x, enemy.y, Math.random() * 3, enemy.color, {
-                        x: (Math.random() - 0.5) * 6,
-                        y: (Math.random() - 0.5) * 6
-                    }));
-                }
-                setTimeout(() => {
-                    enemies.splice(index, 1);
-                    projectiles.splice(pIndex, 1);
-                    score += 100;
-                    scoreEl.innerText = score;
-                }, 0);
-            }
+        const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
+        groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+        world.addBody(groundBody);
+
+        // --- ボール ---
+        let ballRadius = 0.5;
+        const ballGeo = new THREE.SphereGeometry(ballRadius);
+        const ballMat = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+        const ballMesh = new THREE.Mesh(ballGeo, ballMat);
+        scene.add(ballMesh);
+
+        const ballBody = new CANNON.Body({
+            mass: 1,
+            shape: new CANNON.Sphere(ballRadius),
+            position: new CANNON.Vec3(0, 1, 0)
         });
-    });
-}
+        world.addBody(ballBody);
 
-window.addEventListener('click', (event) => {
-    const angle = Math.atan2(event.clientY - canvas.height / 2, event.clientX - canvas.width / 2);
-    const velocity = { x: Math.cos(angle) * 6, y: Math.sin(angle) * 6 };
-    projectiles.push(new Projectile(canvas.width / 2, canvas.height / 2, velocity));
-});
+        // --- 操作ロジック ---
+        let isDragging = false;
+        let startPos = { x: 0, y: 0 };
 
-animate();
-spawnEnemies();
-</script>
+        window.addEventListener('touchstart', (e) => {
+            isDragging = true;
+            startPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        });
+
+        window.addEventListener('touchend', (e) => {
+            if (!isDragging) return;
+            const endPos = { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+            
+            const dx = (endPos.x - startPos.x) * 0.05;
+            const dy = (startPos.y - endPos.y) * 0.1; // 上方向の力
+            
+            ballBody.velocity.set(dx, dy, -15); // 奥に向かって飛ばす
+            isDragging = false;
+        });
+
+        // --- グローバル関数 (UI用) ---
+        window.setMass = (m) => {
+            ballBody.mass = m;
+            ballBody.updateMassProperties();
+            alert("重さを " + m + " に変更しました！");
+        };
+
+        window.resetBall = () => {
+            ballBody.position.set(0, 1, 0);
+            ballBody.velocity.set(0, 0, 0);
+            ballBody.angularVelocity.set(0, 0, 0);
+        };
+
+        // --- ループ処理 ---
+        function animate() {
+            requestAnimationFrame(animate);
+            world.fixedStep(); // 物理計算
+
+            // 物理位置をビジュアルに反映
+            ballMesh.position.copy(ballBody.position);
+            ballMesh.quaternion.copy(ballBody.quaternion);
+
+            // カメラをボールに追従
+            camera.position.set(ballBody.position.x, ballBody.position.y + 2, ballBody.position.z + 10);
+            
+            // 距離計
+            document.getElementById('dist').innerText = Math.max(0, -ballBody.position.z).toFixed(1);
+
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
 </body>
 </html>
